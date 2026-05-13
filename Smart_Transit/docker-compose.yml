@@ -1,0 +1,160 @@
+version: "3.9"
+
+# ============================================================
+# Smart Transit Insights — Docker Compose Stack
+# Services: PostgreSQL/PostGIS, Redis, Airflow (webserver+scheduler), Node.js dashboard
+# Run: docker compose up -d
+# ============================================================
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.3-python3.11
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://transit:transit123@postgres/transit_od
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONN_TRANSIT_DB: postgresql+psycopg2://transit:transit123@postgres/transit_od
+    CHENNAI_ONE_API_KEY: "1407d220-536a-48de-baf4-524c8347b487"
+    CHENNAI_ONE_API_URL: "https://api.moving.tech/pilot/app/frfs/daily"
+    GTFS_BUS_PATH: /opt/airflow/data/bus_gtfs
+    GTFS_METRO_PATH: /opt/airflow/data/metro_gtfs
+    GTFS_SUBURBAN_PATH: /opt/airflow/data/suburban_gtfs
+    _PIP_ADDITIONAL_REQUIREMENTS: "psycopg2-binary pandas geopandas h3 requests scikit-learn pulp sqlalchemy"
+  volumes:
+    - ./pipelines/dags:/opt/airflow/dags
+    - ./pipelines/logs:/opt/airflow/logs
+    - ./pipelines/plugins:/opt/airflow/plugins
+    - ./analysis:/opt/airflow/analysis
+    - ./Data:/opt/airflow/data:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - transit-net
+
+services:
+  # ─────────────────────────────────────
+  # PostgreSQL + PostGIS
+  # ─────────────────────────────────────
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: transit_postgres
+    environment:
+      POSTGRES_USER: transit
+      POSTGRES_PASSWORD: transit123
+      POSTGRES_DB: transit_od
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./pipelines/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "transit", "-d", "transit_od"]
+      interval: 10s
+      retries: 5
+    networks:
+      - transit-net
+
+  # ─────────────────────────────────────
+  # Redis (Airflow optional, used for cache)
+  # ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: transit_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - transit-net
+
+  # ─────────────────────────────────────
+  # Airflow Init
+  # ─────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: transit_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Transit \
+          --lastname Admin \
+          --role Admin \
+          --email admin@transit.local \
+          --password admin123 || true
+    restart: "no"
+
+  # ─────────────────────────────────────
+  # Airflow Webserver
+  # ─────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: transit_airflow_web
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  # ─────────────────────────────────────
+  # Airflow Scheduler
+  # ─────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: transit_airflow_scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  # ─────────────────────────────────────
+  # Node.js Analytics Dashboard
+  # ─────────────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: transit_dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: transit_postgres
+      DB_PORT: 5432
+      DB_NAME: transit_od
+      DB_USER: transit
+      DB_PASSWORD: transit123
+      CHENNAI_ONE_API_KEY: "1407d220-536a-48de-baf4-524c8347b487"
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./Data:/app/data:ro
+    networks:
+      - transit-net
+    restart: always
+
+volumes:
+  postgres_data:
+
+networks:
+  transit-net:
+    driver: bridge

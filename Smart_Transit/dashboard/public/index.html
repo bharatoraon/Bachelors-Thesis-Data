@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Transit Insights — Chennai OD Analytics</title>
+  <meta name="description" content="Origin-Destination analytics platform for Chennai's multimodal public transit — MTC Bus, CMRL Metro, and Suburban Rail." />
+
+  <!-- MapLibre GL JS -->
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- ══════════════════════ SIDEBAR ══════════════════════ -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-mark">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+          <circle cx="16" cy="16" r="14" stroke="url(#grad)" stroke-width="2"/>
+          <path d="M8 16 L16 8 L24 16 L16 24 Z" fill="url(#grad)" opacity="0.8"/>
+          <defs>
+            <linearGradient id="grad" x1="0" y1="0" x2="32" y2="32">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#06b6d4"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div class="logo-text">
+        <span class="logo-title">SmartTransit</span>
+        <span class="logo-sub">OD Analytics</span>
+      </div>
+    </div>
+
+    <div class="sidebar-date">
+      <label for="date-picker">Analysis Date</label>
+      <input type="date" id="date-picker" />
+    </div>
+
+    <ul class="nav-links">
+      <li class="nav-item active" data-view="overview" id="nav-overview">
+        <span class="nav-icon">◎</span>
+        <span>Overview</span>
+      </li>
+      <li class="nav-item" data-view="od-map" id="nav-od-map">
+        <span class="nav-icon">⬡</span>
+        <span>OD Heatmap</span>
+      </li>
+      <li class="nav-item" data-view="routes" id="nav-routes">
+        <span class="nav-icon">⇌</span>
+        <span>Route Performance</span>
+      </li>
+      <li class="nav-item" data-view="gaps" id="nav-gaps">
+        <span class="nav-icon">△</span>
+        <span>Route Gaps</span>
+      </li>
+      <li class="nav-item" data-view="fleet" id="nav-fleet">
+        <span class="nav-icon">⊟</span>
+        <span>Fleet Optimizer</span>
+      </li>
+      <li class="nav-item" data-view="alerts" id="nav-alerts">
+        <span class="nav-icon">⚑</span>
+        <span>Crowding Alerts</span>
+        <span class="badge" id="alert-badge">0</span>
+      </li>
+    </ul>
+
+    <div class="sidebar-footer">
+      <div class="status-indicator" id="db-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting…</span>
+      </div>
+      <div class="api-credit">ChennaiOne API • CUMTA GTFS</div>
+    </div>
+  </nav>
+
+  <!-- ══════════════════════ MAIN CONTENT ══════════════════════ -->
+  <main class="main-content" id="main-content">
+
+    <!-- ── HEADER ── -->
+    <header class="page-header">
+      <div class="header-left">
+        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
+        <div class="breadcrumb">
+          <span id="view-title">Overview</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="mode-filters">
+          <button class="mode-btn active" data-mode="ALL">All Modes</button>
+          <button class="mode-btn" data-mode="BUS">🚌 Bus</button>
+          <button class="mode-btn" data-mode="METRO">🚇 Metro</button>
+          <button class="mode-btn" data-mode="SUBURBAN">🚆 Suburban</button>
+        </div>
+        <div class="toggle-wrap" title="Auto-refresh every 60s">
+          <div class="toggle-switch" id="auto-refresh-toggle"></div>
+          <span class="toggle-label" id="auto-refresh-label">Live</span>
+        </div>
+        <button class="refresh-btn" id="refresh-btn" title="Refresh data">↺</button>
+      </div>
+    </header>
+
+    <!-- ────── VIEW: OVERVIEW ────── -->
+    <section class="view" id="view-overview">
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card" id="kpi-ridership">
+          <div class="kpi-icon kpi-blue">🚌</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="kpi-total-passengers">—</div>
+            <div class="kpi-label">Total Passengers</div>
+            <div class="kpi-sub" id="kpi-ridership-sub">Loading…</div>
+          </div>
+          <div class="kpi-sparkline-wrap">
+            <canvas class="kpi-sparkline" id="spark-ridership"></canvas>
+          </div>
+        </div>
+
+        <div class="kpi-card" id="kpi-revenue">
+          <div class="kpi-icon kpi-green">₹</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="kpi-revenue-val">—</div>
+            <div class="kpi-label">Daily Revenue (INR)</div>
+            <div class="kpi-sub" id="kpi-revenue-sub">Loading…</div>
+          </div>
+          <div class="kpi-sparkline-wrap">
+            <canvas class="kpi-sparkline" id="spark-revenue"></canvas>
+          </div>
+        </div>
+
+        <div class="kpi-card" id="kpi-alerts">
+          <div class="kpi-icon kpi-orange">⚑</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="kpi-alert-count">—</div>
+            <div class="kpi-label">Crowding Alerts</div>
+            <div class="kpi-sub" id="kpi-alert-sub">Loading…</div>
+          </div>
+        </div>
+
+        <div class="kpi-card" id="kpi-gaps">
+          <div class="kpi-icon kpi-purple">△</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="kpi-gap-count">—</div>
+            <div class="kpi-label">Route Gaps Detected</div>
+            <div class="kpi-sub" id="kpi-gap-sub">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ridership Trend + Mode Split -->
+      <div class="chart-row">
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Daily Ridership Trend</h3>
+            <div class="chart-pills">
+              <button class="pill active" data-trend="30">30d</button>
+              <button class="pill" data-trend="90">90d</button>
+              <button class="pill" data-trend="180">6mo</button>
+            </div>
+          </div>
+          <canvas id="chart-ridership-trend" height="120"></canvas>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>Mode Split</h3>
+          </div>
+          <canvas id="chart-mode-split" height="180"></canvas>
+        </div>
+      </div>
+
+      <!-- Mini Map — stops overview -->
+      <div class="map-card">
+        <div class="chart-header">
+          <h3>Stop Network — Chennai CMA</h3>
+          <span class="map-legend">
+            <span class="dot dot-bus"></span> Bus
+            <span class="dot dot-metro"></span> Metro
+            <span class="dot dot-suburban"></span> Suburban
+          </span>
+        </div>
+        <div id="mini-map" class="mini-map"></div>
+      </div>
+
+    </section>
+
+    <!-- ────── VIEW: OD HEATMAP ────── -->
+    <section class="view hidden" id="view-od-map">
+      <div class="map-full-wrap">
+        <div class="map-loader" id="od-map-loader">
+          <div class="loader-ring"></div>
+          <span>Loading Map Data...</span>
+        </div>
+        <div class="map-controls">
+          <div class="control-group">
+            <label>Hour Filter</label>
+            <input type="range" id="hour-slider" min="0" max="23" value="8" />
+            <span id="hour-label" class="mono">08:00</span>
+          </div>
+          <div class="control-group">
+            <label>Min Demand</label>
+            <input type="range" id="demand-slider" min="1" max="500" value="10" />
+            <span id="demand-label" class="mono">10</span>
+          </div>
+          <div class="control-group">
+            <label>Show Desire Lines</label>
+            <input type="checkbox" id="toggle-desire" checked />
+          </div>
+        </div>
+        <div id="od-map" class="map-full"></div>
+        <div class="od-legend">
+          <div class="legend-title">Trip Demand</div>
+          <div class="legend-scale">
+            <span>&lt; 25</span>
+            <div class="legend-gradient"></div>
+            <span>800+</span>
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); margin-top:8px; text-align:center;">Thicker lines = higher demand</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────── VIEW: ROUTE PERFORMANCE ────── -->
+    <section class="view hidden" id="view-routes">
+      <div class="section-toolbar">
+        <input class="search-input" id="route-search" type="search" placeholder="Search routes…" />
+        <select id="sort-select" class="select-input">
+          <option value="peak_load">Sort: Peak Load</option>
+          <option value="total_riders">Sort: Riders</option>
+          <option value="avg_load">Sort: Avg Load</option>
+        </select>
+        <button class="export-btn" id="export-routes-btn">⭳ Export CSV</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table" id="routes-table">
+          <thead>
+            <tr>
+              <th>Route</th>
+              <th>Mode</th>
+              <th>Avg Load</th>
+              <th>Peak Load</th>
+              <th>Total Riders</th>
+              <th>Status</th>
+              <th>Hourly</th>
+            </tr>
+          </thead>
+          <tbody id="routes-tbody">
+            <tr><td colspan="7" class="loading-row">Loading route data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Hourly sparkline panel (shown on row click) -->
+      <div class="detail-panel-backdrop hidden" id="route-detail-panel">
+        <div class="detail-panel">
+          <div class="detail-header">
+            <h3 id="route-detail-name">Route Detail</h3>
+            <button class="close-btn" id="close-route-detail">✕</button>
+          </div>
+          <canvas id="chart-hourly" height="100"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ────── VIEW: ROUTE GAPS ────── -->
+    <section class="view hidden" id="view-gaps">
+      <div class="gap-layout">
+        <div class="gap-sidebar">
+          <div class="gap-filters">
+            <button class="filter-btn active" data-priority="ALL">All</button>
+            <button class="filter-btn" data-priority="HIGH">🔴 High</button>
+            <button class="filter-btn" data-priority="MEDIUM">🟡 Medium</button>
+            <button class="filter-btn" data-priority="LOW">🟢 Low</button>
+            <button class="export-btn" id="export-gaps-btn" style="padding:4px 10px; font-size:12px; margin-left:auto;">⭳ CSV</button>
+          </div>
+          <div class="gap-list" id="gap-list">
+            <div class="loading-row">Detecting route gaps…</div>
+          </div>
+        </div>
+        <div class="gap-map-wrap">
+          <div class="map-loader" id="gap-map-loader">
+            <div class="loader-ring"></div>
+            <span>Loading Map Data...</span>
+          </div>
+          <div id="gap-map" class="map-full"></div>
+          <div class="gap-stats" id="gap-stats">
+            <div class="stat-item"><span class="stat-val" id="gs-total">—</span><span class="stat-lbl">Total Gaps</span></div>
+            <div class="stat-item"><span class="stat-val" id="gs-high">—</span><span class="stat-lbl">High Priority</span></div>
+            <div class="stat-item"><span class="stat-val" id="gs-clusters">—</span><span class="stat-lbl">Clusters</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────── VIEW: FLEET OPTIMIZER ────── -->
+    <section class="view hidden" id="view-fleet">
+      <div class="fleet-header">
+        <h2>Fleet Allocation Recommendations</h2>
+        <p class="fleet-sub">LP-optimised headway and fleet adjustments based on load factor analysis</p>
+      </div>
+      <div class="fleet-grid" id="fleet-grid">
+        <div class="loading-row">Loading recommendations…</div>
+      </div>
+    </section>
+
+    <!-- ────── VIEW: ALERTS ────── -->
+    <section class="view hidden" id="view-alerts">
+      <div class="alerts-toolbar">
+        <button class="severity-btn active" data-sev="ALL">All</button>
+        <button class="severity-btn critical" data-sev="CRITICAL">Critical</button>
+        <button class="severity-btn warning" data-sev="WARNING">Warning</button>
+      </div>
+      <div class="alerts-grid" id="alerts-grid">
+        <div class="loading-row">Loading alerts…</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════ TOAST / LOADING ══════════════════════ -->
+  <div class="toast-container" id="toast-container"></div>
+  <div class="global-loader hidden" id="global-loader">
+    <div class="loader-ring"></div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
